@@ -15,20 +15,12 @@ module.exports = (sequelize) => {
     resetPasswordExpires: { type: DataTypes.DATE, allowNull: true }
   }, { timestamps: true });
 
-  // User.beforeCreate(async (user) => {
-  //   if (user.password) user.password = await bcrypt.hash(user.password, 12);
-  // });
   User.beforeCreate(async (user) => {
     if (user.password && !user.password.startsWith("$2b$")) {
       user.password = await bcrypt.hash(user.password, 12);
     }
   });
 
-  // User.beforeUpdate(async (user) => {
-  //   if (user.changed('password')) {
-  //     user.password = await bcrypt.hash(user.password, 12);
-  //   }
-  // });
   User.beforeUpdate(async (user) => {
     if (user.changed("password") && !user.password.startsWith("$2b$")) {
       user.password = await bcrypt.hash(user.password, 12);

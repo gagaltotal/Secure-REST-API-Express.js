@@ -48,9 +48,11 @@ async function start() {
   app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
 }
 
-start().catch(err => {
-  console.error('Failed to start', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  start().catch(err => {
+    console.error('Failed to start', err);
+    process.exit(1);
+  });
+}
 
 module.exports = app;

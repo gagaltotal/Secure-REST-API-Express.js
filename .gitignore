@@ -4,3 +4,13 @@ uploads/
 coverage/
 .jest-cache/
 *.log
+.DS_Store
+.vscode/
+.idea/
+.eslintcache
+.prettiercache
+.env.test
+.env.production
+.babelrc
+package-lock.json
+yarn.lock

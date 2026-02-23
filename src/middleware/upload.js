@@ -1,5 +1,5 @@
 const multer = require('multer');
-const FileType = require('file-type');
+let FileType;
 const path = require('path');
 const fs = require('fs').promises;
 
@@ -11,6 +11,10 @@ const upload = multer({
 });
 
 async function validateAndSave(fileBuffer, destDir, allowed) {
+  if (!FileType) {
+    const mod = await import('file-type');
+    FileType = mod.default || mod;
+  }
   const ft = await FileType.fromBuffer(fileBuffer);
   if (!ft || !allowed.includes(ft.mime)) throw new Error('Invalid file type');
   const ext = ft.ext;
