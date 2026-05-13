@@ -26,31 +26,97 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+app.get("/", require("./controllers/IndexController").index);
 app.use('/auth', authRoutes);
 app.use('/users', userRoutes);
 app.use('/products', productRoutes);
-
-setupSwagger(app);
 
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message || 'Internal error' });
 });
 
-const PORT = process.env.PORT || 3000;
+// Konfigurasi port
+const DEFAULT_PORT = parseInt(process.env.PORT, 10) || 3000;
+const MAX_PORT_ATTEMPTS = 10;
+
+/**
+ * Mencari port yang tersedia secara recursive
+ * @param {Express} app - Express app instance
+ * @param {number} startPort - Port awal
+ * @param {number} maxAttempts - Maksimal percobaan
+ * @returns {Promise<{server: Server, port: number}>}
+ */
+function findAvailablePort(app, startPort, maxAttempts = MAX_PORT_ATTEMPTS) {
+  return new Promise((resolve, reject) => {
+    let currentPort = startPort;
+    let attempts = 0;
+
+    function tryPort() {
+      if (attempts >= maxAttempts) {
+        reject(new Error(
+          `Tidak bisa menemukan port tersedia setelah ${maxAttempts} percobaan (port ${startPort}-${currentPort - 1})`
+        ));
+        return;
+      }
+
+      const server = app.listen(currentPort)
+        .once('listening', () => {
+          if (currentPort !== startPort) {
+            console.log(`\n Port ${startPort} sudah digunakan, menggunakan port ${currentPort} sebagai gantinya`);
+          }
+          resolve({ server, port: currentPort });
+        })
+        .once('error', (err) => {
+          if (err.code === 'EADDRINUSE') {
+            console.log(`Port ${currentPort} sudah digunakan, mencoba port ${currentPort + 1}...`);
+            currentPort++;
+            attempts++;
+            tryPort();
+          } else {
+            reject(err);
+          }
+        });
+    }
+
+    tryPort();
+  });
+}
 
 async function start() {
   await sequelize.authenticate();
   await sequelize.sync();
-  
+
   startEmailRetryWorker();
-  
-  app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+
+  try {
+    const { server, port } = await findAvailablePort(app, DEFAULT_PORT);
+
+    setupSwagger(app, port);
+    
+    console.log(`\n Server berjalan di port ${port}`);
+    console.log(`API Docs: http://localhost:${port}/api-docs\n`);
+
+    const shutdown = (signal) => {
+      console.log(`\n${signal} diterima, menutup server...`);
+      server.close(() => {
+        console.log('Server ditutup');
+        process.exit(0);
+      });
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+
+  } catch (err) {
+    console.error('Gagal menjalankan server:', err.message);
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {
   start().catch(err => {
-    console.error('Failed to start', err);
+    console.error('Gagal memulai aplikasi:', err);
     process.exit(1);
   });
 }
