@@ -95,7 +95,7 @@ async function start() {
     setupSwagger(app, port);
     
     console.log(`\n Server berjalan di port ${port}`);
-    console.log(`API Docs: http://localhost:${port}/api-docs\n`);
+    console.log(`API Docs: http://localhost:${port}/docs\n`);
 
     const shutdown = (signal) => {
       console.log(`\n${signal} diterima, menutup server...`);
