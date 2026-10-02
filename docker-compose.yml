@@ -1,0 +1,82 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: secure-express-api:latest
+    container_name: secure-express-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Keep the Node heap small so the container stays light.
+      NODE_OPTIONS: --max-old-space-size=192
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-secure_api_db}
+      DB_USER: ${DB_USER:-root}
+      DB_PASS: ${DB_PASS:-password}
+      JWT_SECRET: ${JWT_SECRET:-replace_this_with_strong_secret}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_PROVIDER: ${SSO_PROVIDER:-generic}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI:-}
+      SSO_AUTHORIZE_URL: ${SSO_AUTHORIZE_URL:-}
+      SSO_TOKEN_URL: ${SSO_TOKEN_URL:-}
+      SSO_USERINFO_URL: ${SSO_USERINFO_URL:-}
+      SSO_SCOPE: ${SSO_SCOPE:-openid email profile}
+      SSO_DEFAULT_ROLE: ${SSO_DEFAULT_ROLE:-user}
+    # Keep runtime memory small so the API runs smoothly without heavy load.
+    mem_limit: 256m
+    memswap_limit: 256m
+    mem_reservation: 128m
+    # Uncomment when using `docker compose` with Swarm-style resource limits.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          memory: 128M
+    volumes:
+      - uploads:/app/uploads
+
+  db:
+    image: mysql:8.0
+    container_name: secure-express-db
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-password}
+      MYSQL_DATABASE: ${DB_NAME:-secure_api_db}
+    ports:
+      - "3306:3306"
+    # MySQL is memory-heavy by default; cap it for a light local footprint.
+    mem_limit: 512m
+    memswap_limit: 512m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASS:-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  db_data:
+  uploads:

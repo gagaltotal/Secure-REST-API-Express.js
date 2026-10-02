@@ -1,7 +1,7 @@
 const express = require('express');
 
 const router = express.Router();
-const { login, register, verifyEmail, requestPasswordReset, resetPassword } = require('../controllers/authController');
+const { login, register, verifyEmail, requestPasswordReset, resetPassword, ssoAuthorize, ssoCallback } = require('../controllers/authController');
 const { registerLimiter, forgotLimiter } = require('../middleware/authRateLimit');
 
 /**
@@ -124,5 +124,48 @@ router.post('/forgot', forgotLimiter, requestPasswordReset);
  *         description: Password updated
  */
 router.post('/reset', resetPassword);
+
+/**
+ * @swagger
+ * /auth/sso:
+ *   get:
+ *     summary: Start SSO login (redirects to the identity provider)
+ *     tags: [Auth]
+ *     responses:
+ *       302:
+ *         description: Redirect to the identity provider authorize endpoint
+ *       503:
+ *         description: SSO not enabled or not configured
+ */
+router.get('/sso', ssoAuthorize);
+
+/**
+ * @swagger
+ * /auth/sso/callback:
+ *   get:
+ *     summary: SSO callback (exchanges the code and returns a JWT)
+ *     tags: [Auth]
+ *     parameters:
+ *       - in: query
+ *         name: code
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: state
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: JWT token
+ *       400:
+ *         description: Invalid state or missing code
+ *       401:
+ *         description: Token exchange failed
+ *       503:
+ *         description: SSO not enabled or not configured
+ */
+router.get('/sso/callback', ssoCallback);
 
 module.exports = router;

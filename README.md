@@ -17,6 +17,19 @@ Secure REST API dibangun dengan Express.js dan Sequelize (MySQL) yang menyediaka
 - **Transactions** — atomic DB operations di critical flows
 - **Password Hashing** — bcrypt with 12 salt rounds
 
+### SSO (Single Sign-On)
+- **SSO Login** — login lewat identity provider eksternal (OIDC/OAuth2) di `/auth/sso`
+- **CSRF Protection** — `state` parameter acak disimpan di cookie `httpOnly` (10 menit)
+- **Auto Provisioning** — user baru otomatis dibuat (random password, `emailVerified: true`)
+- **Generic Provider** — kompatibel dengan provider apa pun via konfigurasi env `SSO_*`
+- **JWT Sama** — hasil callback mengembalikan JWT dengan payload `{ id, role }` seperti login biasa
+
+### Docker & Runtime
+- **Docker Build** — multi-stage build (`node:20-alpine`) dengan `npm ci --omit=dev`
+- **Small Memory Footprint** — `NODE_OPTIONS=--max-old-space-size=192`, limit container 256 MB
+- **Docker Compose** — API + MySQL 8.0 siap jalan (`docker compose up`)
+- **Non-root Runtime** — proses berjalan sebagai user `node`, plus healthcheck bawaan
+
 ### Email & Background Jobs
 - **SMTP Integration** — `nodemailer` dengan env variables
 - **Email Retry Logic** — exponential backoff (2s, 4s, 8s)
@@ -50,11 +63,11 @@ Secure REST API dibangun dengan Express.js dan Sequelize (MySQL) yang menyediaka
 │   │   ├── user.js               # User model (verify, reset fields)
 │   │   └── product.js            # Product model
 │   ├── routes/
-│   │   ├── auth.js               # Auth endpoints (swagger docs)
+│   │   ├── auth.js               # Auth endpoints + SSO (swagger docs)
 │   │   ├── users.js              # Users CRUD (swagger docs)
 │   │   └── products.js           # Products CRUD (swagger docs)
 │   ├── controllers/
-│   │   ├── authController.js     # Register, verify, login, forgot, reset
+│   │   ├── authController.js     # Register, verify, login, forgot, reset, SSO
 │   │   ├── usersController.js    # CRUD + email duplicate check
 │   │   └── productsController.js # CRUD + file upload
 │   ├── middleware/
@@ -84,6 +97,9 @@ Secure REST API dibangun dengan Express.js dan Sequelize (MySQL) yang menyediaka
 ├── .gitignore
 ├── package.json
 ├── jest.config.js
+├── Dockerfile                    # Multi-stage build (small runtime memory)
+├── docker-compose.yml            # API + MySQL 8.0 + memory limits
+├── .dockerignore                 # Keep build context & image minimal
 └── README.md
 ```
 
@@ -291,6 +307,56 @@ curl -X POST http://localhost:3000/auth/reset \
   "message": "Password reset successful"
 }
 ```
+
+---
+
+#### `GET /auth/sso` — Start SSO Login
+
+Redirect ke identity provider (OIDC/OAuth2) untuk login via SSO. Endpoint ini menghasilkan `state` acak (disimpan di cookie `httpOnly`) untuk proteksi CSRF, lalu mengarahkan browser ke halaman login provider.
+
+```
+GET http://localhost:3000/auth/sso
+```
+
+**Behavior:**
+- `302` redirect ke `SSO_AUTHORIZE_URL` (dengan `client_id`, `redirect_uri`, `scope`, `state`)
+- `503` jika SSO tidak dikonfigurasi / dinonaktifkan (`SSO_ENABLED=false`)
+
+**Details:**
+- `state` disimpan di cookie `httpOnly` (`sso_state`), `SameSite=Lax`, expire 10 menit
+- Cookie `Secure` otomatis aktif saat `NODE_ENV=production`
+- Scope default: `openid email profile`
+
+---
+
+#### `GET /auth/sso/callback` — SSO Callback
+
+Callback dari identity provider. Menukar `code` menjadi token, mengambil profil user, lalu mengembalikan JWT aplikasi (payload `{ id, role }`).
+
+```
+GET http://localhost:3000/auth/sso/callback?code=<CODE>&state=<STATE>
+```
+
+**Query Parameters:**
+- `code` — authorization code dari provider (wajib)
+- `state` — harus sama dengan nilai di cookie `sso_state` (wajib)
+
+**Response:**
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": "1h",
+  "provider": "generic"
+}
+```
+
+**Details:**
+- `400` jika `code` hilang atau `state` tidak cocok
+- `401` jika token exchange atau pengambilan user info gagal
+- `503` jika SSO tidak dikonfigurasi
+- User baru otomatis dibuat (auto provisioning): password acak, role sesuai `SSO_DEFAULT_ROLE` (default `user`), `emailVerified: true`
+- User yang sudah ada langsung di-login tanpa perubahan data
+- Email diambil dari `email` / `preferred_username` / `upn` pada user info
 
 ---
 
@@ -739,6 +805,32 @@ CREATE TABLE Products (
 3. Use managed MySQL (AWS RDS, Google Cloud SQL)
 4. Enable HTTPS (reverse proxy: nginx, HAProxy)
 
+### Docker
+
+Build & jalankan API dengan runtime memory kecil supaya ringan dan stabil.
+
+**Build image:**
+
+```bash
+# Multi-stage build, dev dependency tidak ikut ke image
+docker build -t secure-express-api .
+```
+
+**Jalankan dengan Docker Compose (API + MySQL 8.0):**
+
+```bash
+# Set SSO_* dan variabel lain di .env terlebih dahulu
+docker compose up -d --build
+```
+
+**Karakteristik runtime:**
+
+- Multi-stage build berbasis `node:20-alpine` → image kecil
+- `npm ci --omit=dev` → hanya production dependency yang masuk image
+- `NODE_OPTIONS=--max-old-space-size=192` → heap V8 dibatasi 192 MB
+- Memory limit API `256 MB` (reservation `128 MB`), MySQL `512 MB`
+- Container jalan sebagai non-root user `node` + `HEALTHCHECK` pada endpoint `/`
+
 ### Production Checklist
 
 - [ ] Use non-destructive migrations (`npm run db:migrate`)
@@ -755,6 +847,8 @@ CREATE TABLE Products (
 - [ ] Upgrade email retry to Redis + BullMQ
 - [ ] Add request logging (Winston, Pino)
 - [ ] Setup alerting for critical errors
+- [ ] Set `NODE_OPTIONS=--max-old-space-size` sesuai limit memory container
+- [ ] Set memory limit container (`mem_limit`) sesuai kapasitas host
 
 ---
 
@@ -778,6 +872,16 @@ CREATE TABLE Products (
 | `SMTP_FROM` | - | Yes | Sender email |
 | `APP_URL` | `http://localhost:3000` | No | Base URL (for email links) |
 | `UPLOAD_DIR` | `uploads` | No | Upload directory |
+| `SSO_ENABLED` | `false` | No | Aktifkan SSO login (`true`/`false`) |
+| `SSO_PROVIDER` | `generic` | No | Nama provider (label internal) |
+| `SSO_CLIENT_ID` | - | Yes* | OAuth client ID (*wajib bila SSO aktif) |
+| `SSO_CLIENT_SECRET` | - | Yes* | OAuth client secret (*wajib bila SSO aktif) |
+| `SSO_REDIRECT_URI` | - | Yes* | Callback URL (`http://localhost:3000/auth/sso/callback`) |
+| `SSO_AUTHORIZE_URL` | - | Yes* | Endpoint authorize provider |
+| `SSO_TOKEN_URL` | - | Yes* | Endpoint token provider |
+| `SSO_USERINFO_URL` | - | Yes* | Endpoint userinfo provider |
+| `SSO_SCOPE` | `openid email profile` | No | Scope yang diminta ke provider |
+| `SSO_DEFAULT_ROLE` | `user` | No | Role default untuk user baru hasil SSO |
 
 ---
 
@@ -798,6 +902,9 @@ CREATE TABLE Products (
 - **[tests/auth.test.js](tests/auth.test.js)** — Auth flow tests
 - **[tests/users.test.js](tests/users.test.js)** — Users CRUD tests
 - **[tests/ratelimit.test.js](tests/ratelimit.test.js)** — Rate limiting tests
+- **[Dockerfile](Dockerfile)** — Multi-stage Docker build (small runtime memory)
+- **[docker-compose.yml](docker-compose.yml)** — API + MySQL 8.0 dengan memory limits
+- **[.dockerignore](.dockerignore)** — Keep build context & image minimal
 
 ---
 
